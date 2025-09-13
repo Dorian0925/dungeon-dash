@@ -1,28 +1,32 @@
-# Dungeon Dash
+# Dungeon Dash  
 
-A terminal-based dungeon crawler game built with Go and Bubble Tea. Navigate through levels, collect treasures, avoid traps and enemies, and survive as long as possible.
+A terminal-based dungeon crawler game built with Go and Bubble Tea. Navigate through levels, collect treasures, avoid traps and enemies, and survive as long as possible.  
 
-## Features
+<p align="center">
+  <img src="dungeon-dash.jpg" alt="Dungeon Dash gameplay" width="700">
+</p>
 
-- Progressive difficulty with increasing levels
-- Real-time enemy AI that tracks player movement
-- Health system with healing potions
-- Trap avoidance mechanics
-- Score tracking and level progression
-- Responsive terminal UI with Unicode characters
+## Features  
 
-## Installation
+- Progressive difficulty with increasing levels  
+- Real-time enemy AI that tracks player movement  
+- Health system with healing potions  
+- Trap avoidance mechanics  
+- Score tracking and level progression  
+- Responsive terminal UI with Unicode characters  
 
-### Prerequisites
+## Installation  
 
-- Go 1.25.0 or higher
+### Prerequisites  
 
-### Build from Source
+- Go 1.25.0 or higher  
 
-```bash
-git clone https://github.com/Cod-e-Codes/dungeon-dash.git
-cd dungeon-dash
-go mod download
+### Build from Source  
+
+```bash  
+git clone https://github.com/Cod-e-Codes/dungeon-dash.git  
+cd dungeon-dash  
+go mod download  
 go build -o dungeon-dash
 ```
 
