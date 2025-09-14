@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	width             = 40
-	height            = 20
 	initialHP         = 5
-	initialMoveDelay  = 200 * time.Millisecond
+	maxHP             = 10                     // Cap maximum HP
+	initialMoveDelay  = 105 * time.Millisecond // Balanced movement speed
 	initialEnemyDelay = 500 * time.Millisecond
 	maxSpawnAttempts  = 100 // Prevent infinite loops
 )
@@ -51,11 +50,17 @@ type model struct {
 	score              int
 	level              int
 	treasuresToCollect int
-	board              [height][width]tile
+	board              [][]tile
 	lastMove           time.Time
 	moveDelay          time.Duration
 	enemyDelay         time.Duration
 	lastEnemyMove      time.Time
+	pendingDirection   position
+	width              int
+	height             int
+	countdown          int
+	lastCountdown      time.Time
+	countdownActive    bool
 }
 
 type tickMsg time.Time
@@ -67,6 +72,8 @@ func doTick() tea.Cmd {
 }
 
 func initialModel() model {
+	// Default size, will be updated on first resize
+	width, height := 40, 20
 	return model{
 		state:      menu,
 		playerHP:   initialHP,
@@ -74,7 +81,40 @@ func initialModel() model {
 		level:      1,
 		moveDelay:  initialMoveDelay,
 		enemyDelay: initialEnemyDelay,
+		width:      width,
+		height:     height,
+		board:      make([][]tile, height),
+		countdown:  -1,
 	}
+}
+
+func (m *model) resizeBoard(newWidth, newHeight int) {
+	// Ensure minimum size
+	if newWidth < 20 {
+		newWidth = 20
+	}
+	if newHeight < 10 {
+		newHeight = 10
+	}
+
+	m.width = newWidth
+	m.height = newHeight
+
+	// Recreate board with new dimensions
+	m.board = make([][]tile, newHeight)
+	for y := 0; y < newHeight; y++ {
+		m.board[y] = make([]tile, newWidth)
+	}
+
+	// Adjust player position if out of bounds
+	if m.player.x >= newWidth {
+		m.player.x = newWidth - 1
+	}
+	if m.player.y >= newHeight {
+		m.player.y = newHeight - 1
+	}
+
+	m.updateBoard()
 }
 
 func (m *model) startLevel() {
@@ -84,8 +124,13 @@ func (m *model) startLevel() {
 	m.spawnTreasures(numTreasures)
 	m.spawnTraps(3 + m.level)
 	m.spawnEnemies(2 + m.level/2)
-	m.spawnItems(1 + m.level/2)
-	m.player = position{width / 2, height / 2}
+	// Spawn fewer potions - only every 3rd level gets a potion
+	if m.level%3 == 0 {
+		m.spawnItems(1)
+	}
+	m.player = position{m.width / 2, m.height / 2}
+	// Reset pending direction to prevent immediate movement
+	m.pendingDirection = position{0, 0}
 	m.updateBoard()
 }
 
@@ -136,14 +181,14 @@ func randomEmpty(m *model) position {
 	}
 
 	for attempts := 0; attempts < maxSpawnAttempts; attempts++ {
-		pos := position{rand.Intn(width), rand.Intn(height)}
+		pos := position{rand.Intn(m.width), rand.Intn(m.height)}
 		if !occupied[pos] {
 			return pos
 		}
 	}
 
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := 0; y < m.height; y++ {
+		for x := 0; x < m.width; x++ {
 			pos := position{x, y}
 			if !occupied[pos] {
 				return pos
@@ -172,8 +217,8 @@ func containsPos(arr []position, p position, ignoreIdx int) bool {
 }
 
 func (m *model) updateBoard() {
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := 0; y < m.height; y++ {
+		for x := 0; x < m.width; x++ {
 			m.board[y][x] = empty
 		}
 	}
@@ -201,7 +246,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case menu:
 			if msg.String() == "enter" || msg.String() == " " {
 				m.state = playing
-				m.startLevel()
+				m.startCountdown()
 				return m, doTick()
 			} else if msg.String() == "q" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -218,27 +263,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = paused
 				return m, nil
 			}
-			dir := position{0, 0}
-			switch msg.String() {
-			case "w", "up":
-				dir = position{0, -1}
-			case "s", "down":
-				dir = position{0, 1}
-			case "a", "left":
-				dir = position{-1, 0}
-			case "d", "right":
-				dir = position{1, 0}
-			case "q", "ctrl+c":
-				return m, tea.Quit
-			default:
-				return m, nil
-			}
-			if time.Since(m.lastMove) >= m.moveDelay {
-				newPos := position{m.player.x + dir.x, m.player.y + dir.y}
-				if newPos.x >= 0 && newPos.x < width && newPos.y >= 0 && newPos.y < height {
-					m.player = newPos
-					m.lastMove = time.Now()
-					m.checkCollisions()
+			// Don't process movement during countdown
+			if !m.countdownActive {
+				switch msg.String() {
+				case "w", "up":
+					m.pendingDirection = position{0, -1}
+				case "s", "down":
+					m.pendingDirection = position{0, 1}
+				case "a", "left":
+					m.pendingDirection = position{-1, 0}
+				case "d", "right":
+					m.pendingDirection = position{1, 0}
+				case "q", "ctrl+c":
+					return m, tea.Quit
+				default:
+					return m, nil
 				}
 			}
 			return m, doTick()
@@ -252,11 +291,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.state == playing {
-			m.moveEnemies()
+			// Process countdown first
+			if m.countdownActive {
+				m.processCountdown()
+			} else {
+				// Only process game logic if countdown is not active
+				m.moveEnemies()
+				m.processPlayerMovement()
+			}
 		}
 		return m, doTick()
+
+	case tea.WindowSizeMsg:
+		// Calculate board size based on terminal size
+		// Reserve space for UI elements (borders, status, controls)
+		// Emojis take up 2 character widths, so divide by 2 for proper sizing
+		boardWidth := (msg.Width - 4) / 2 // Account for borders and emoji width
+		boardHeight := msg.Height - 8     // Account for borders and UI text
+
+		// Ensure we have a reasonable minimum size
+		if boardWidth < 20 {
+			boardWidth = 20
+		}
+		if boardHeight < 10 {
+			boardHeight = 10
+		}
+
+		m.resizeBoard(boardWidth, boardHeight)
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m *model) processPlayerMovement() {
+	// Only move if enough time has passed and there's a pending direction
+	if time.Since(m.lastMove) >= m.moveDelay && (m.pendingDirection.x != 0 || m.pendingDirection.y != 0) {
+		newPos := position{m.player.x + m.pendingDirection.x, m.player.y + m.pendingDirection.y}
+		if newPos.x >= 0 && newPos.x < m.width && newPos.y >= 0 && newPos.y < m.height {
+			m.player = newPos
+			m.lastMove = time.Now()
+			m.checkCollisions()
+		}
+	}
 }
 
 func (m *model) moveEnemies() {
@@ -303,9 +379,12 @@ func (m *model) checkCollisions() {
 	}
 	for i, item := range m.items {
 		if item == m.player {
-			m.playerHP++
+			// Only heal if below max HP
+			if m.playerHP < maxHP {
+				m.playerHP++
+			}
 			m.items = append(m.items[:i], m.items[i+1:]...)
-			m.items = append(m.items, randomEmpty(m))
+			// Don't respawn potion immediately - let it respawn naturally
 			break
 		}
 	}
@@ -322,8 +401,11 @@ func (m *model) checkCollisions() {
 	}
 	for i, e := range m.enemies {
 		if e == m.player {
-			m.state = gameOver
+			m.playerHP--
 			m.enemies[i] = randomEmpty(m)
+			if m.playerHP <= 0 {
+				m.state = gameOver
+			}
 			break
 		}
 	}
@@ -331,7 +413,7 @@ func (m *model) checkCollisions() {
 		m.treasuresToCollect = 0
 		m.level++
 		m.enemyDelay = time.Duration(max(100, 500-m.level*30)) * time.Millisecond
-		m.startLevel()
+		m.startCountdown()
 	}
 	m.updateBoard()
 }
@@ -341,6 +423,61 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m *model) getCountdownASCII(count int) string {
+	switch count {
+	case 3:
+		return `                       ██████╗                      
+                       ╚════██╗                     
+                        █████╔╝                     
+                        ╚═══██╗                     
+                       ██████╔╝                     
+                       ╚═════╝                      `
+	case 2:
+		return `                       ██████╗                      
+                       ╚════██╗                     
+                        █████╔╝                     
+                       ██╔═══╝                      
+                       ███████╗                     
+                       ╚══════╝                     `
+	case 1:
+		return `                         ██╗                        
+                         ██║                        
+                         ██║                        
+                         ██║                        
+                         ██║                        
+                         ╚═╝                        `
+	case 0:
+		return `   ███████╗████████╗ █████╗ ██████╗ ████████╗██╗    
+   ██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██║    
+   ███████╗   ██║   ███████║██████╔╝   ██║   ██║    
+   ╚════██║   ██║   ██╔══██║██╔══██╗   ██║   ╚═╝    
+   ███████║   ██║   ██║  ██║██║  ██║   ██║   ██╗    
+   ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝    `
+	default:
+		return ""
+	}
+}
+
+func (m *model) startCountdown() {
+	m.countdown = 3
+	m.countdownActive = true
+	m.lastCountdown = time.Now()
+	// Load the level first so we can show it with the overlay
+	m.startLevel()
+}
+
+func (m *model) processCountdown() {
+	if time.Since(m.lastCountdown) >= time.Second {
+		m.countdown--
+		m.lastCountdown = time.Now()
+
+		if m.countdown < 0 {
+			// Countdown finished, activate gameplay
+			m.countdownActive = false
+		}
+	}
 }
 
 func renderTile(t tile) string {
@@ -365,41 +502,80 @@ func (m model) View() string {
 	var s string
 	switch m.state {
 	case menu:
-		title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")).Align(lipgloss.Center).Width(width)
-		instruct := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Align(lipgloss.Center).Width(width)
+		title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")).Align(lipgloss.Center).Width(m.width)
+		instruct := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Align(lipgloss.Center).Width(m.width)
 		s += title.Render("🛡️ DUNGEON DASH") + "\n\n"
 		s += instruct.Render("Use WASD or arrow keys to move") + "\n"
 		s += instruct.Render("Collect all treasures 💰 per level, avoid traps ⚠️ & enemies 👹") + "\n"
 		s += instruct.Render("🧪 potions heal | Levels get harder!") + "\n\n"
 		s += instruct.Render("Press ENTER to start or Q to quit") + "\n"
 	case paused:
-		title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")).Align(lipgloss.Center).Width(width)
+		title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")).Align(lipgloss.Center).Width(m.width)
 		s += title.Render("PAUSED") + "\n\n"
 		s += "Press P to resume or Q to quit\n"
 	case playing, gameOver:
 		board := ""
-		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
+		for y := 0; y < m.height; y++ {
+			for x := 0; x < m.width; x++ {
 				board += renderTile(m.board[y][x])
 			}
 			board += "\n"
 		}
 		border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62"))
-		s += border.Render(board)
+		boardWithBorder := border.Render(board)
+
+		// Apply countdown overlay using lipgloss.Place (like the example's dialog)
+		if m.countdownActive {
+			var countdownText string
+			if m.countdown > 0 {
+				countdownText = m.getCountdownASCII(m.countdown)
+			} else {
+				countdownText = m.getCountdownASCII(0) // "START!"
+			}
+
+			// Create a dialog box style like in the example
+			dialogBoxStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#874BFD")).
+				Padding(1, 2).
+				Background(lipgloss.Color("#2D3748")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true).
+				Align(lipgloss.Center)
+
+			dialog := dialogBoxStyle.Render(countdownText)
+
+			// Use lipgloss.Place to overlay the dialog on top of the board
+			// Use the exact board dimensions to prevent layout shift
+			boardWithBorder = lipgloss.Place(
+				lipgloss.Width(boardWithBorder),
+				lipgloss.Height(boardWithBorder),
+				lipgloss.Center,
+				lipgloss.Center,
+				dialog,
+				lipgloss.WithWhitespaceChars("⬛"),
+				lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}),
+			)
+		}
+
+		s += boardWithBorder
 		s += fmt.Sprintf("\nScore: %d | HP: %d | Level: %d | Treasures Left: %d\n", m.score, m.playerHP, m.level, len(m.treasures))
 		if m.state == gameOver {
-			over := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Align(lipgloss.Center).Width(width)
+			over := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Align(lipgloss.Center).Width(m.width)
 			s += over.Render("GAME OVER! Press R to restart or Q to quit\n")
 		} else {
-			s += "Controls: WASD/Arrows: Move | P: Pause | Q: Quit\n"
+			if m.countdownActive {
+				s += "Get ready to move!\n"
+			} else {
+				s += "Controls: WASD/Arrows: Move | P: Pause | Q: Quit\n"
+			}
 		}
 	}
 	return s
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
