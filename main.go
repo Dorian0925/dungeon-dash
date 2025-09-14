@@ -61,6 +61,8 @@ type model struct {
 	countdown          int
 	lastCountdown      time.Time
 	countdownActive    bool
+	gameOverOverlay    bool
+	pausedOverlay      bool
 }
 
 type tickMsg time.Time
@@ -251,16 +253,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if msg.String() == "q" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
-		case paused:
-			if msg.String() == "p" {
-				m.state = playing
-				return m, doTick()
-			} else if msg.String() == "q" || msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 		case playing:
 			if msg.String() == "p" {
-				m.state = paused
+				m.pausedOverlay = true
+				return m, nil
+			}
+			// Allow quitting during countdown or game over overlay
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			// Handle paused overlay
+			if m.pausedOverlay {
+				if msg.String() == "p" {
+					m.pausedOverlay = false
+					return m, doTick()
+				} else if msg.String() == "q" || msg.String() == "ctrl+c" {
+					return m, tea.Quit
+				}
+				return m, nil
+			}
+			// Handle game over overlay
+			if m.gameOverOverlay {
+				if msg.String() == "r" {
+					return initialModel(), doTick()
+				}
 				return m, nil
 			}
 			// Don't process movement during countdown
@@ -274,8 +290,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingDirection = position{-1, 0}
 				case "d", "right":
 					m.pendingDirection = position{1, 0}
-				case "q", "ctrl+c":
-					return m, tea.Quit
 				default:
 					return m, nil
 				}
@@ -394,7 +408,7 @@ func (m *model) checkCollisions() {
 			m.traps = append(m.traps[:i], m.traps[i+1:]...)
 			m.traps = append(m.traps, randomEmpty(m))
 			if m.playerHP <= 0 {
-				m.state = gameOver
+				m.gameOverOverlay = true
 			}
 			break
 		}
@@ -404,7 +418,7 @@ func (m *model) checkCollisions() {
 			m.playerHP--
 			m.enemies[i] = randomEmpty(m)
 			if m.playerHP <= 0 {
-				m.state = gameOver
+				m.gameOverOverlay = true
 			}
 			break
 		}
@@ -460,6 +474,24 @@ func (m *model) getCountdownASCII(count int) string {
 	}
 }
 
+func (m *model) getGameOverASCII() string {
+	return `██████╗  █████╗ ███╗   ███╗███████╗     ██████╗ ██╗   ██╗███████╗██████╗ ██╗
+██╔════╝ ██╔══██╗████╗ ████║██╔════╝    ██╔═══██╗██║   ██║██╔════╝██╔══██╗██║
+██║  ███╗███████║██╔████╔██║█████╗      ██║   ██║██║   ██║█████╗  ██████╔╝██║
+██║   ██║██╔══██║██║╚██╔╝██║██╔══╝      ██║   ██║╚██╗ ██╔╝██╔══╝  ██╔══██╗╚═╝
+╚██████╔╝██║  ██║██║ ╚═╝ ██║███████╗    ╚██████╔╝ ╚████╔╝ ███████╗██║  ██║██╗
+ ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝     ╚═════╝   ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝`
+}
+
+func (m *model) getPausedASCII() string {
+	return `██████╗  █████╗ ██╗   ██╗███████╗███████╗██████╗ 
+██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════╝██╔══██╗
+██████╔╝███████║██║   ██║███████╗█████╗  ██║  ██║
+██╔═══╝ ██╔══██║██║   ██║╚════██║██╔══╝  ██║  ██║
+██║     ██║  ██║╚██████╔╝███████║███████╗██████╔╝
+╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝╚═════╝`
+}
+
 func (m *model) startCountdown() {
 	m.countdown = 3
 	m.countdownActive = true
@@ -509,10 +541,6 @@ func (m model) View() string {
 		s += instruct.Render("Collect all treasures 💰 per level, avoid traps ⚠️ & enemies 👹") + "\n"
 		s += instruct.Render("🧪 potions heal | Levels get harder!") + "\n\n"
 		s += instruct.Render("Press ENTER to start or Q to quit") + "\n"
-	case paused:
-		title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("82")).Align(lipgloss.Center).Width(m.width)
-		s += title.Render("PAUSED") + "\n\n"
-		s += "Press P to resume or Q to quit\n"
 	case playing, gameOver:
 		board := ""
 		for y := 0; y < m.height; y++ {
@@ -558,14 +586,74 @@ func (m model) View() string {
 			)
 		}
 
+		// Apply paused overlay
+		if m.pausedOverlay {
+			pausedText := m.getPausedASCII()
+
+			// Create a dialog box style for paused (blue theme)
+			dialogBoxStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#0066CC")).
+				Padding(1, 2).
+				Background(lipgloss.Color("#1B2D3D")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true).
+				Align(lipgloss.Center)
+
+			dialog := dialogBoxStyle.Render(pausedText)
+
+			// Use lipgloss.Place to overlay the dialog on top of the board
+			boardWithBorder = lipgloss.Place(
+				lipgloss.Width(boardWithBorder),
+				lipgloss.Height(boardWithBorder),
+				lipgloss.Center,
+				lipgloss.Center,
+				dialog,
+				lipgloss.WithWhitespaceChars("⬛"),
+				lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}),
+			)
+		}
+
+		// Apply game over overlay
+		if m.gameOverOverlay {
+			gameOverText := m.getGameOverASCII()
+
+			// Create a dialog box style for game over
+			dialogBoxStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#FF0000")).
+				Padding(1, 2).
+				Background(lipgloss.Color("#2D1B1B")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Bold(true).
+				Align(lipgloss.Center)
+
+			dialog := dialogBoxStyle.Render(gameOverText)
+
+			// Use lipgloss.Place to overlay the dialog on top of the board
+			boardWithBorder = lipgloss.Place(
+				lipgloss.Width(boardWithBorder),
+				lipgloss.Height(boardWithBorder),
+				lipgloss.Center,
+				lipgloss.Center,
+				dialog,
+				lipgloss.WithWhitespaceChars("⬛"),
+				lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}),
+			)
+		}
+
 		s += boardWithBorder
 		s += fmt.Sprintf("\nScore: %d | HP: %d | Level: %d | Treasures Left: %d\n", m.score, m.playerHP, m.level, len(m.treasures))
 		if m.state == gameOver {
 			over := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Align(lipgloss.Center).Width(m.width)
 			s += over.Render("GAME OVER! Press R to restart or Q to quit\n")
 		} else {
-			if m.countdownActive {
-				s += "Get ready to move!\n"
+			if m.pausedOverlay {
+				s += "Press P to resume or Q to quit\n"
+			} else if m.gameOverOverlay {
+				s += "Press R to restart or Q to quit\n"
+			} else if m.countdownActive {
+				s += "Get ready to move! (Q to quit)\n"
 			} else {
 				s += "Controls: WASD/Arrows: Move | P: Pause | Q: Quit\n"
 			}
