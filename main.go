@@ -12,7 +12,7 @@ import (
 const (
 	initialHP         = 5
 	maxHP             = 10                     // Cap maximum HP
-	initialMoveDelay  = 105 * time.Millisecond // Balanced movement speed
+	initialMoveDelay  = 100 * time.Millisecond // Balanced movement speed
 	initialEnemyDelay = 500 * time.Millisecond
 	maxSpawnAttempts  = 100 // Prevent infinite loops
 )

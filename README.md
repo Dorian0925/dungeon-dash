@@ -80,7 +80,7 @@ Collect all treasures on each level while avoiding traps and enemies. Each level
 ### Game Configuration
 
 - **Board size**: Responsive to terminal size (minimum 20x10)
-- **Move delay**: 105ms (optimized for responsive controls)
+- **Move delay**: 100ms (optimized for responsive controls)
 - **Enemy delay**: 500ms (decreases with level)
 - **Starting HP**: 5 (maximum 10)
 - **Treasures per level**: 5 + (level-1) * 2
