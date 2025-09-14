@@ -352,7 +352,7 @@ func renderTile(t tile) string {
 	case treasure:
 		return "💰"
 	case trap:
-		return "⚠️ "
+		return "⚠️"
 	case enemy:
 		return "👹"
 	case potion:
